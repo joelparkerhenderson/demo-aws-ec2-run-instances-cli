@@ -1,0 +1,81 @@
+#!/bin/sh
+
+##
+# AWS command line script to create a typical EC2 instance.
+#
+# Syntax:
+#
+#     aws-ec2-run-instances-demo
+#
+# This script is a demo of a bunch of AWS commands, to show
+# how the commands are interrelated and can work together.
+#
+# This script is infrastructure as code.
+##
+
+set -x
+
+# https://github.com/sixarm/sixarm-unix-shell-functions
+out() { printf %s\\n "$*" ; }
+err() { >&2 printf %s\\n "$*" ; }
+die() { >&2 printf %s\\n "$*" ; exit 1 ; }
+cmd() { command -v "$1" >/dev/null 2>&1 ; }
+
+key_name(){
+    aws ec2 describe-key-pairs |
+	jq -r '.KeyPairs[0].KeyName'
+}
+
+security_group_id(){
+    aws ec2 describe-security-groups |
+	jq -r '.SecurityGroups[0].GroupId'
+}
+
+image_id(){
+    aws ec2 describe-images \
+	--owners amazon \
+	--filters \
+	"Name=name,Values=amzn*" \
+	"Name=root-device-type,Values=ebs" \
+	"Name=virtualization-type,Values=hvm" \
+	"Name=architecture,Values=x86_64" \
+	--query "sort_by(Images, &CreationDate)[-1].ImageId" |
+	sed 's/^"//; s/"$//;'
+}
+
+availability_zone_name(){
+    aws ec2 describe-availability-zones |
+	jq -r '.AvailabilityZones[0].ZoneName'
+}
+
+subnet_id(){
+    aws ec2 describe-subnets \
+	--filters \
+	"Name=defaultForAz,Values=true" \
+	"Name=availabilityZone,Values=$(availability_zone_name)" |
+	jq -r '.Subnets[0].SubnetId'
+}
+
+vpc_id(){
+    aws ec2 describe-vpcs \
+	--filter "Name=isDefault,Values=true" |
+	jq -r '.Vpcs[0].VpcId'
+}
+
+main(){
+    cmd aws || die "Command `aws` is missing"
+    aws ec2 run-instances \
+	--dry-run \
+	--image-id "$(image_id)" \
+	--subnet-id "$(subnet_id)" \
+	--count 1 \
+	--instance-type t3.small \
+	--monitoring "Enabled=true" \
+	--ebs-optimized \
+	--disable-api-termination \
+	--key-name "$(key_name)" \
+	--security-group-ids "$(security_group_id)" \
+	--block-device-mappings '{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp2","DeleteOnTermination":true}}'
+}
+
+main
